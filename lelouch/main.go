@@ -35,6 +35,15 @@ func getBlockDevices() ([]BlockDevice, error) {
 		return nil, fmt.Errorf("failed to parse JSON: %v", err)
 	}
 
+	// remove loop devices and partitions
+	filteredDevices := []BlockDevice{}
+	for _, device := range lsblkOutput.BlockDevices {
+		if device.Type == "disk" {
+			filteredDevices = append(filteredDevices, device)
+		}
+	}
+	lsblkOutput.BlockDevices = filteredDevices;
+
 	// Add /dev/ prefix to device names
 	for i := range lsblkOutput.BlockDevices {
 		lsblkOutput.BlockDevices[i].Name = "/dev/" + lsblkOutput.BlockDevices[i].Name
