@@ -3,10 +3,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/rivo/tview"
+	"zerotrace/lib"
 )
 
 // BlockDevice represents a storage device
@@ -107,7 +110,105 @@ func runCommand(cmdStr string, output *tview.TextView, app *tview.Application) {
 		app.QueueUpdateDraw(func() {
 			output.Write([]byte(fmt.Sprintf("\n[ERROR] %s\n", err.Error())))
 		})
+	} else {
+		// Command completed successfully, now sign the wipe data
+		go func() {
+			if err := signWipeData(output, app); err != nil {
+				app.QueueUpdateDraw(func() {
+					output.Write([]byte(fmt.Sprintf("\n[ERROR] Failed to sign wipe data: %s\n", err.Error())))
+				})
+			}
+		}()
 	}
+}
+
+// SignedWipeData represents the structure of the signed wipe data
+type SignedWipeData struct {
+	Data      interface{} `json:"data"`
+	PublicKey string      `json:"publickey"`
+	Signature string      `json:"signature"`
+}
+
+// signWipeData reads the wipe_log.json, signs it, and updates the file
+func signWipeData(output *tview.TextView, app *tview.Application) error {
+	// Read the existing wipe_log.json
+	wipeLogPath := "wipe_log.json"
+	data, err := ioutil.ReadFile(wipeLogPath)
+	if err != nil {
+		return fmt.Errorf("failed to read wipe_log.json: %v", err)
+	}
+
+	// Parse the existing wipe data
+	var wipeData interface{}
+	if err := json.Unmarshal(data, &wipeData); err != nil {
+		return fmt.Errorf("failed to parse wipe_log.json: %v", err)
+	}
+
+	// Generate a new key pair
+	keyPair, err := lib.GenerateKeyPair()
+	if err != nil {
+		return fmt.Errorf("failed to generate key pair: %v", err)
+	}
+
+	// Get the public key in PEM format
+	publicKeyPEM, err := keyPair.PublicKeyToPEM()
+	if err != nil {
+		return fmt.Errorf("failed to convert public key to PEM: %v", err)
+	}
+
+	// Sign the wipe data
+	signature, err := keyPair.SignData(wipeData)
+	if err != nil {
+		return fmt.Errorf("failed to sign wipe data: %v", err)
+	}
+
+	// Create the signed wipe data structure
+	signedData := SignedWipeData{
+		Data:      wipeData,
+		PublicKey: publicKeyPEM,
+		Signature: signature,
+	}
+
+	// Convert to JSON
+	signedJSON, err := json.MarshalIndent(signedData, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal signed data: %v", err)
+	}
+
+	// Write back to the file
+	if err := ioutil.WriteFile(wipeLogPath, signedJSON, 0644); err != nil {
+		return fmt.Errorf("failed to write signed data to file: %v", err)
+	}
+
+	// Upload the certificate to 0x0.st
+	url, err := lib.UploadCert(wipeLogPath)
+	if err != nil {
+		return fmt.Errorf("failed to upload certificate: %v", err)
+	}
+
+	// Generate ASCII QR code for the certificate URL
+	qrASCII, err := lib.GenerateQRCodeASCII(url)
+	if err != nil {
+		return fmt.Errorf("failed to generate QR code: %v", err)
+	}
+
+	// Display the certificate URL and QR code in the output view
+	app.QueueUpdateDraw(func() {
+		output.Write([]byte(fmt.Sprintf("\n\nHere is your cert: %s\n\n", url)))
+		output.Write([]byte("QR Code:\n"))
+		output.Write([]byte(qrASCII))
+		output.Write([]byte("\n"))
+	})
+
+	// Remove the wipe_log.json file after successful upload
+	if err := os.Remove(wipeLogPath); err != nil {
+		// Log the error but don't fail the entire process
+		app.QueueUpdateDraw(func() {
+			output.Write([]byte(fmt.Sprintf("[WARNING] Failed to remove %s: %s\n", wipeLogPath, err.Error())))
+		})
+	}
+
+	return nil
 }
 
 func main() {
@@ -152,7 +253,7 @@ func main() {
 				// Clear previous output
 				output.Clear()
 				// Fixed command format - pass device name as argument
-				cmd := fmt.Sprintf("bash ./scripts/wipe.sh %s", currentDevice.Name)
+				cmd := fmt.Sprintf("bash ./scripts/test.sh %s", currentDevice.Name)
 				// Run command in background
 				go runCommand(cmd, output, app)
 			},
