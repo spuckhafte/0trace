@@ -42,7 +42,7 @@ func getBlockDevices() ([]BlockDevice, error) {
 			filteredDevices = append(filteredDevices, device)
 		}
 	}
-	lsblkOutput.BlockDevices = filteredDevices;
+	lsblkOutput.BlockDevices = filteredDevices
 
 	// Add /dev/ prefix to device names
 	for i := range lsblkOutput.BlockDevices {
@@ -56,16 +56,58 @@ func runCommand(cmdStr string, output *tview.TextView, app *tview.Application) {
 	parts := strings.Fields(cmdStr)
 	cmd := exec.Command(parts[0], parts[1:]...)
 
-	// Use CombinedOutput for thread safety
-	result, err := cmd.CombinedOutput()
+	// Create pipes for real-time output
+	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
 
-	// Update UI in thread-safe way
-	app.QueueUpdateDraw(func() {
-		output.Write(result)
-		if err != nil {
-			output.Write([]byte("\n[ERROR] " + err.Error()))
+	// Start the command
+	cmd.Start()
+
+	// Stream stdout
+	go func() {
+		buf := make([]byte, 1024)
+		for {
+			n, err := stdout.Read(buf)
+			if n > 0 {
+				text := string(buf[:n])
+				// Clean up carriage returns
+				text = strings.ReplaceAll(text, "\r", "\n")
+				app.QueueUpdateDraw(func() {
+					output.Write([]byte(text))
+				})
+			}
+			if err != nil {
+				break
+			}
 		}
-	})
+	}()
+
+	// Stream stderr
+	go func() {
+		buf := make([]byte, 1024)
+		for {
+			n, err := stderr.Read(buf)
+			if n > 0 {
+				text := string(buf[:n])
+				// Clean up carriage returns
+				text = strings.ReplaceAll(text, "\r", "\n")
+				app.QueueUpdateDraw(func() {
+					output.Write([]byte(text))
+				})
+			}
+			if err != nil {
+				break
+			}
+		}
+	}()
+
+	// Wait for command to finish
+	err := cmd.Wait()
+	if err != nil {
+		app.QueueUpdateDraw(func() {
+			output.Write([]byte(fmt.Sprintf("\n[ERROR] %s\n", err.Error())))
+		})
+	}
 }
 
 func main() {
@@ -109,10 +151,8 @@ func main() {
 			func() {
 				// Clear previous output
 				output.Clear()
-
 				// Fixed command format - pass device name as argument
 				cmd := fmt.Sprintf("bash ./scripts/wipe.sh %s", currentDevice.Name)
-
 				// Run command in background
 				go runCommand(cmd, output, app)
 			},
