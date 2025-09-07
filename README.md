@@ -1,4 +1,3 @@
-
 # 🔐 Secure Wipe Certificate Flow (Hackathon Final)
 
 ## 1. Boot & Setup
