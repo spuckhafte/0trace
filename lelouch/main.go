@@ -111,7 +111,7 @@ func main() {
 				output.Clear()
 
 				// Fixed command format - pass device name as argument
-				cmd := fmt.Sprintf("bash ./scripts/test.sh %s", currentDevice.Name)
+				cmd := fmt.Sprintf("bash ./scripts/wipe.sh %s", currentDevice.Name)
 
 				// Run command in background
 				go runCommand(cmd, output, app)
